@@ -153,8 +153,10 @@ class SupabaseDb {
     try {
       final rows = await _client.from('teams').select();
       final teams = rows.map((row) => RosterTeam.fromJson(row)).toList();
-      // Fire-and-forget snapshot (§4.10) — explicitly ignored on failure.
-      unawaited(LocalDb.saveTeams(teams));
+      // Replace-all snapshot (§4.10): on a successful fetch, drop local rows
+      // absent remotely so hard-deleted teams don't resurrect offline.
+      // Fire-and-forget — explicitly ignored on failure.
+      unawaited(LocalDb.replaceAllTeams(teams));
       return teams;
     } catch (e) {
       return await LocalDb.loadTeams() ?? const [];
@@ -179,7 +181,11 @@ class SupabaseDb {
   /// Hard delete of a saved roster.
   static Future<bool> deleteTeam(String id) async {
     try {
+      // No _schoolId guard: RLS scopes the delete to the caller's school.
       await _client.from('teams').delete().eq('id', id);
+      // Remove from the local snapshot too — otherwise the next offline
+      // fallback reload re-renders and re-snapshots the deleted roster (B2).
+      unawaited(LocalDb.deleteTeam(id));
       return true;
     } catch (e) {
       return false;
@@ -198,13 +204,19 @@ class SupabaseDb {
   static Future<List<Tournament>> loadTournaments(List<Player> players) async {
     try {
       final metaRows = await _client.from('tournaments').select();
-      if (metaRows.isEmpty) return const [];
+      if (metaRows.isEmpty) {
+        // Successful fetch, zero rows: clear the snapshot too (delete-missing)
+        // so hard-deleted tournaments don't resurrect offline (B2).
+        unawaited(LocalDb.replaceAllTournaments(const []));
+        return const [];
+      }
       final ids = metaRows.map((row) => row['id'] as String).toList();
 
       final rosterRows = await _client
           .from('tournament_players')
           .select()
-          .inFilter('tournament_id', ids);
+          .inFilter('tournament_id', ids)
+          .order('player_id');
       final matchRows = await _client
           .from('matches')
           .select()
@@ -215,26 +227,23 @@ class SupabaseDb {
       // Group bulk rows by tournament id.
       final rosterByTournament = <String, List<Map<String, dynamic>>>{};
       for (final row in rosterRows) {
-        final r = row;
         rosterByTournament
-            .putIfAbsent(r['tournament_id'] as String, () => [])
-            .add(r);
+            .putIfAbsent(row['tournament_id'] as String, () => [])
+            .add(row);
       }
       final matchesByTournament = <String, List<Map<String, dynamic>>>{};
       for (final row in matchRows) {
-        final r = row;
         matchesByTournament
-            .putIfAbsent(r['tournament_id'] as String, () => [])
-            .add(r);
+            .putIfAbsent(row['tournament_id'] as String, () => [])
+            .add(row);
       }
 
       final masterById = {for (final p in players) p.id: p};
       final tournaments = <Tournament>[];
       for (final row in metaRows) {
-        final meta = row;
         // DB rows carry only the §2 columns (no players/rounds json keys);
         // Tournament.fromJson fills those as empty before we reattach them.
-        final t = Tournament.fromJson(meta);
+        final t = Tournament.fromJson(row);
         final tid = t.id;
 
         // Roster: ratings come from the enrollment-time snapshot row (§2
@@ -275,8 +284,11 @@ class SupabaseDb {
 
         tournaments.add(t);
       }
-      // Fire-and-forget snapshot (§4.10) — explicitly ignored on failure.
-      unawaited(LocalDb.saveTournaments(tournaments));
+      // Replace-all snapshot (§4.10): on a successful fetch, drop local rows
+      // absent remotely so hard-deleted tournaments don't resurrect offline.
+      // Fire-and-forget — explicitly ignored on failure. On fetch FAILURE the
+      // snapshot is left untouched (offline fallback keeps the last state).
+      unawaited(LocalDb.replaceAllTournaments(tournaments));
       return tournaments;
     } catch (e) {
       return await LocalDb.loadTournaments(players) ?? const [];
@@ -335,8 +347,9 @@ class SupabaseDb {
     }
   }
 
-  /// Saves every tournament; stops at the first failure and reports false so
-  /// the caller can queue the remainder offline (§4.10).
+  /// Saves every tournament, stopping at the FIRST failure and returning
+  /// false (tournaments already saved are NOT rolled back — upserts are
+  /// idempotent, so callers should re-queue the FULL list on failure).
   static Future<bool> saveTournaments(List<Tournament> tournaments) async {
     for (final t in tournaments) {
       if (!await saveTournament(t)) return false;
@@ -345,10 +358,14 @@ class SupabaseDb {
   }
 
   /// Hard delete of the metadata row only — the DB cascades to
-  /// tournament_players and matches (§2 ON DELETE CASCADE).
+  /// tournament_players and matches (§2 ON DELETE CASCADE). No _schoolId
+  /// guard: RLS scopes the delete to the caller's school.
   static Future<bool> deleteTournament(String id) async {
     try {
       await _client.from('tournaments').delete().eq('id', id);
+      // Remove from the local snapshot too — otherwise the next offline
+      // fallback reload re-renders and re-snapshots the deleted row (B2).
+      unawaited(LocalDb.deleteTournament(id));
       return true;
     } catch (e) {
       return false;

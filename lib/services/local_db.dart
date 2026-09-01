@@ -76,6 +76,23 @@ class LocalDb {
     }
   }
 
+  /// REPLACE-ALL snapshot write (delete-missing): removes local rows absent
+  /// from [teams]. Used after successful remote fetches so hard-deleted teams
+  /// cannot resurrect from a stale snapshot. Players keep merge semantics
+  /// (soft delete via is_active). Returns false on storage failure.
+  static Future<bool> replaceAllTeams(List<RosterTeam> teams) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        DbKeys.teams,
+        jsonEncode(teams.map((t) => t.toJson()).toList()),
+      );
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Upsert-by-id snapshot write. Returns false on storage failure.
   static Future<bool> saveTeams(List<RosterTeam> teams) async {
     try {
@@ -132,6 +149,25 @@ class LocalDb {
   /// Upsert-by-id snapshot write. Returns false on storage failure.
   static Future<bool> saveTournament(Tournament tournament) =>
       saveTournaments([tournament]);
+
+  /// REPLACE-ALL snapshot write (delete-missing): removes local rows absent
+  /// from [tournaments]. Used after successful remote fetches so hard-deleted
+  /// tournaments cannot resurrect from a stale snapshot. Returns false on
+  /// storage failure.
+  static Future<bool> replaceAllTournaments(
+    List<Tournament> tournaments,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        DbKeys.tournaments,
+        jsonEncode(tournaments.map((t) => t.toJson()).toList()),
+      );
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
 
   /// Upsert-by-id snapshot write. Returns false on storage failure.
   static Future<bool> saveTournaments(List<Tournament> tournaments) async {

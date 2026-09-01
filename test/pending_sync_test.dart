@@ -164,4 +164,69 @@ void main() {
     expect(rebuilt!.rounds[0][0].result, MatchResult.whiteWins);
     expect(rebuilt!.rounds[0][0].whiteRatingDelta, 9);
   });
+
+  group('corrupt queue payload (Gate 3, M1)', () {
+    /// Writes a raw string directly under the queue key.
+    Future<void> seedRaw(String raw) async {
+      SharedPreferences.setMockInitialValues({
+        'pending_tournament_finalizations_v1': raw,
+      });
+    }
+
+    test('salvages well-shaped entries and drops corrupt ones', () async {
+      const raw =
+          '[{"players":[{"id":"1","first_name":"F1","last_name":"L1"}],'
+          '"tournament":{"id":"good"}},'
+          '"not-a-map",'
+          '{"no_players_field":true}]';
+      await seedRaw(raw);
+
+      expect(await PendingSyncService.pendingCount(), 1);
+      final synced = await PendingSyncService.trySyncAll(
+        saveTournament: (_) async => true,
+        savePlayers: (_) async => true,
+      );
+      expect(synced, 1);
+      expect(await PendingSyncService.pendingCount(), 0);
+    });
+
+    test('unparsable payload: left untouched, drained as 0, queue() throws', () async {
+      const raw = '{not valid json';
+      await seedRaw(raw);
+
+      // Load is treated as failed: count 0, drain syncs nothing.
+      expect(await PendingSyncService.pendingCount(), 0);
+      final synced = await PendingSyncService.trySyncAll(
+        saveTournament: (_) async => true,
+        savePlayers: (_) async => true,
+      );
+      expect(synced, 0);
+
+      // The stored value must NOT be overwritten by a failed load.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('pending_tournament_finalizations_v1'), raw);
+
+      // queue() refuses to wipe a corrupt payload.
+      await expectLater(
+        PendingSyncService.queue(players: [p('1')]),
+        throwsStateError,
+      );
+      expect(
+        (await SharedPreferences.getInstance())
+            .getString('pending_tournament_finalizations_v1'),
+        raw,
+      );
+    });
+
+    test('salvage drops entries whose tournament is not a map; queue() is safe', () async {
+      const raw =
+          '[{"players":[],"tournament":"garbage"},{"players":[],"tournament":null}]';
+      await seedRaw(raw);
+      // The "garbage" entry fails the expected shape (tournament must be a
+      // map or null) and is dropped at load; the null-tournament entry and
+      // the newly queued entry survive.
+      await PendingSyncService.queue(players: [p('1')], tournament: t('tt'));
+      expect(await PendingSyncService.pendingCount(), 2);
+    });
+  });
 }
