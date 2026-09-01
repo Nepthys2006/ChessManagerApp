@@ -2,15 +2,24 @@ import 'models/chess_match.dart';
 import 'models/player.dart';
 import 'models/team.dart';
 import 'models/tournament.dart';
+import 'services/local_db.dart';
 
 /// Compile-time demo-seed flag (§3 table row SEED_DEMO). Set via
 /// `--dart-define-from-file=.env` or `--dart-define=SEED_DEMO=true`.
-/// Phase 3 wires seeding: when true, LocalDb is seeded with [DemoData] —
+/// When true, [seedDemoDataIfRequested] seeds LocalDb with [DemoData] —
 /// touching only the local snapshot, never live Supabase data.
 const bool seedDemo = bool.fromEnvironment('SEED_DEMO');
 
-/// Static sample dataset. NO service/LocalDb wiring lives here — Phase 3
-/// (services agent) wires the seeding; this file only supplies the data.
+/// Phase-3 seeding wiring (§3): when [seedDemo] is true, writes [DemoData]
+/// into the LOCAL snapshot only — never Supabase. Called from main.dart
+/// (Phase 4) before the auth gate renders.
+Future<void> seedDemoDataIfRequested() async {
+  if (!seedDemo) return;
+  await LocalDb.savePlayers(DemoData.players);
+  await LocalDb.saveTeams(DemoData.teams);
+  await LocalDb.saveTournaments(DemoData.tournaments);
+}
+
 class DemoData {
   DemoData._();
 
