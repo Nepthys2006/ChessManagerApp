@@ -10,6 +10,9 @@ build/
 .vscode/
 *.iml
 
+# Deep-work session state (local only)
+.slim/deepwork/
+
 # OS
 .DS_Store
 Thumbs.db
