@@ -1,0 +1,23 @@
+# Secrets / local config — must never be committed
+.env
+
+# AI tooling (local-only, not part of the shipped app)
+.opencode/
+opencode.json
+opencode-slim.cmd
+
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
