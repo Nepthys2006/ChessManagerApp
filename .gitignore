@@ -16,3 +16,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Secrets (never commit)
+private.md
+.env
